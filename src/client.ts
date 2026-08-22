@@ -1,0 +1,154 @@
+import { VERSION } from "./version.js";
+import { FetchTransport, type Transport } from "./transport.js";
+import {
+  APIError,
+  AuthenticationError,
+  BadRequestError,
+  IbanCheckerError,
+  NotFoundError,
+  RateLimitError,
+} from "./errors.js";
+import {
+  bankRecordFromApi,
+  batchResultFromApi,
+  formatSpecFromApi,
+  validationResultFromApi,
+  type BankRecord,
+  type BatchResult,
+  type FormatSpec,
+  type ValidationResult,
+} from "./models.js";
+
+export const DEFAULT_BASE_URL = "https://ibanchecker.cash/api/v1";
+
+const STATUS_ERRORS: Record<number, new (message: string, options?: any) => IbanCheckerError> = {
+  400: BadRequestError,
+  401: AuthenticationError,
+  404: NotFoundError,
+  429: RateLimitError,
+};
+
+export interface IbanCheckerOptions {
+  /** Defaults to {@link DEFAULT_BASE_URL}. */
+  baseUrl?: string;
+  /** Request timeout in milliseconds. Defaults to 10000. */
+  timeoutMs?: number;
+  /** Inject a custom {@link Transport} instead of the default fetch-based one. */
+  transport?: Transport;
+}
+
+/**
+ * Client for the ibanchecker.cash IBAN validation API.
+ *
+ * Validate IBANs across 92 countries, validate up to 100 IBANs per request,
+ * extract IBANs from free text, look up country format specifications, and
+ * resolve SWIFT/BIC codes.
+ *
+ * An API key is optional. Without one, requests are limited to 100 per hour
+ * per IP. Get a free key at https://ibanchecker.cash/api-docs.
+ *
+ * @example
+ * ```ts
+ * import { IbanChecker } from "@ibanchecker/client";
+ *
+ * const client = new IbanChecker(); // or new IbanChecker("iban_your_key")
+ * const result = await client.validate("DE89 3704 0044 0532 0130 00");
+ * if (result.valid) {
+ *   console.log(result.bankName, result.bic);
+ * }
+ * ```
+ */
+export class IbanChecker {
+  private readonly apiKey?: string;
+  private readonly baseUrl: string;
+  private readonly transport: Transport;
+
+  constructor(apiKey?: string, options: IbanCheckerOptions = {}) {
+    this.apiKey = apiKey;
+    this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+    this.transport = options.transport ?? new FetchTransport(options.timeoutMs ?? 10_000);
+  }
+
+  /** Validate a single IBAN. Returns a result with `valid: false` for a
+   * malformed IBAN (this is not an error); it rejects only on transport,
+   * auth, or rate-limit problems. */
+  async validate(iban: string): Promise<ValidationResult> {
+    const data = await this.request("POST", "/validate", { iban });
+    return validationResultFromApi(data);
+  }
+
+  /** Validate up to 100 IBANs in one request. Results come back in the same
+   * order as the input. */
+  async validateBulk(ibans: readonly string[]): Promise<BatchResult> {
+    const data = await this.request("POST", "/validate/bulk", { ibans });
+    return batchResultFromApi(data);
+  }
+
+  /** Scan free text (emails, invoices) for IBAN-shaped strings and validate
+   * each candidate. Up to 50,000 characters per request. */
+  async extract(text: string): Promise<BatchResult> {
+    const data = await this.request("POST", "/extract", { text });
+    return batchResultFromApi(data);
+  }
+
+  /** Return the IBAN format specification for an ISO 3166-1 alpha-2 country
+   * code (e.g. `"DE"`). */
+  async getFormat(country: string): Promise<FormatSpec> {
+    const data = await this.request("GET", `/formats/${country.toLowerCase()}`);
+    return formatSpecFromApi(data);
+  }
+
+  /** Resolve an 8 or 11 character ISO 9362 BIC to a bank record. */
+  async lookupBic(bic: string): Promise<BankRecord> {
+    const data = await this.request("GET", `/swift/${bic.toUpperCase()}`);
+    return bankRecordFromApi(data);
+  }
+
+  private async request(
+    method: string,
+    path: string,
+    jsonBody?: Record<string, unknown>,
+  ): Promise<any> {
+    const url = `${this.baseUrl}${path}`;
+    const headers: Record<string, string> = {
+      "User-Agent": `ibanchecker-js/${VERSION}`,
+      Accept: "application/json",
+    };
+    if (this.apiKey) {
+      headers.Authorization = `Bearer ${this.apiKey}`;
+    }
+    let body: string | null = null;
+    if (jsonBody !== undefined) {
+      headers["Content-Type"] = "application/json";
+      body = JSON.stringify(jsonBody);
+    }
+
+    let response: { status: number; body: string };
+    try {
+      response = await this.transport.send(method, url, headers, body);
+    } catch (err) {
+      throw new IbanCheckerError(`Request to ${url} failed: ${(err as Error).message}`);
+    }
+
+    let parsed: any = {};
+    try {
+      parsed = response.body ? JSON.parse(response.body) : {};
+    } catch {
+      parsed = {};
+    }
+
+    if (response.status >= 400) {
+      const message =
+        (typeof parsed === "object" && parsed?.error) || `HTTP ${response.status}`;
+      const errorCode = typeof parsed === "object" ? parsed?.error_code : undefined;
+      const ErrorClass = STATUS_ERRORS[response.status] ?? APIError;
+      throw new ErrorClass(message, {
+        status: response.status,
+        errorCode,
+        response: parsed,
+      });
+    }
+
+    return parsed;
+  }
+}
