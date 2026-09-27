@@ -146,9 +146,9 @@ test("lookupBic() uppercases the BIC in the URL", async () => {
 
 const statusCases = [
   [400, BadRequestError, "MISSING_IBAN"],
-  [401, AuthenticationError, "INVALID_KEY"],
+  [401, AuthenticationError, "UNAUTHORIZED"],
   [404, NotFoundError, "BIC_NOT_FOUND"],
-  [429, RateLimitError, "RATE_LIMITED"],
+  [429, RateLimitError, "QUOTA_EXCEEDED"],
   [500, APIError, undefined],
 ];
 

@@ -23,13 +23,16 @@ export class IbanCheckerError extends Error {
 /** The request was malformed (HTTP 400). */
 export class BadRequestError extends IbanCheckerError {}
 
-/** The API key is missing, invalid, or inactive (HTTP 401). */
+/** The API key is missing, invalid, or inactive (HTTP 401). Validation, bulk
+ * validation and extraction raise this when no key was given. */
 export class AuthenticationError extends IbanCheckerError {}
 
 /** The requested country code or BIC was not found (HTTP 404). */
 export class NotFoundError extends IbanCheckerError {}
 
-/** The hourly rate limit or monthly quota was exceeded (HTTP 429). */
+/** A limit was exceeded (HTTP 429): the key's monthly quota
+ * (`errorCode` `"QUOTA_EXCEEDED"`) or, for format and BIC lookups, the hourly
+ * per-IP limit (`"RATE_LIMIT_EXCEEDED"`). */
 export class RateLimitError extends IbanCheckerError {}
 
 /** An unexpected server-side error (HTTP 5xx or other). */

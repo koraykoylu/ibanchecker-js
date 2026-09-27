@@ -17,7 +17,7 @@ Requires Node 18 or newer (for global `fetch`), or any modern browser bundler. T
 ```ts
 import { IbanChecker } from "@ibanchecker/client";
 
-const client = new IbanChecker(); // no API key needed for light use (100 requests/hour per IP)
+const client = new IbanChecker(process.env.IBANCHECKER_API_KEY); // validate, validateBulk and extract need a key
 
 const result = await client.validate("DE89 3704 0044 0532 0130 00");
 if (result.valid) {
@@ -38,21 +38,26 @@ const { IbanChecker } = require("@ibanchecker/client");
 
 ## Authentication
 
-An API key is optional. Without one, requests are limited to 100 per hour per IP. With a key, requests count against your plan quota. Get a free key at [ibanchecker.cash/api-docs](https://ibanchecker.cash/api-docs).
+`validate()`, `validateBulk()` and `extract()` need an API key. Without one the API answers `401` and the client throws an `AuthenticationError`. A free key covers 100 requests a month; request one at [ibanchecker.cash/api-docs](https://ibanchecker.cash/api-docs) and it arrives by email in seconds. Paid plans with higher limits are at [ibanchecker.cash/pricing](https://ibanchecker.cash/pricing).
+
+`getFormat()` and `lookupBic()` need no key. They are limited to 100 requests an hour per IP and do not count against a key's monthly requests.
 
 ```ts
 const client = new IbanChecker("iban_your_api_key");
+
+// format and BIC lookups only, no key
+const lookups = new IbanChecker();
 ```
 
 ## Methods
 
-| Method | Description |
-| --- | --- |
-| `validate(iban: string)` | Validate a single IBAN. Returns a `ValidationResult`. |
-| `validateBulk(ibans: string[])` | Validate up to 100 IBANs. Returns a `BatchResult`. |
-| `extract(text: string)` | Find and validate IBANs in free text (up to 50,000 chars). Returns a `BatchResult`. |
-| `getFormat(country: string)` | IBAN format spec for an ISO country code. Returns a `FormatSpec`. |
-| `lookupBic(bic: string)` | Resolve an 8 or 11 character BIC. Returns a `BankRecord`. |
+| Method | Description | API key |
+| --- | --- | --- |
+| `validate(iban: string)` | Validate a single IBAN. Returns a `ValidationResult`. | Required |
+| `validateBulk(ibans: string[])` | Validate up to 100 IBANs. Returns a `BatchResult`. | Required |
+| `extract(text: string)` | Find and validate IBANs in free text (up to 50,000 chars). Returns a `BatchResult`. | Required |
+| `getFormat(country: string)` | IBAN format spec for an ISO country code. Returns a `FormatSpec`. | Not needed |
+| `lookupBic(bic: string)` | Resolve an 8 or 11 character BIC. Returns a `BankRecord`. | Not needed |
 
 ### Bulk validation
 
@@ -83,6 +88,8 @@ for (const result of batch.results) {
 
 ### Country format and BIC lookup
 
+These two need no API key (100 requests an hour per IP).
+
 ```ts
 const format = await client.getFormat("DE");
 console.log(format.length, format.example); // 22 DE89370400440532013000
@@ -110,6 +117,9 @@ if (result.valid && result.nationalCheckValid === false) {
 
 A malformed IBAN is **not** an exception: `validate()` resolves to a `ValidationResult` with `valid: false`. Rejections happen only for transport, authentication, quota, and server-side problems.
 
+- `AuthenticationError` (401): the key is missing, invalid or inactive. `validate()`, `validateBulk()` and `extract()` raise it when no key was given.
+- `RateLimitError` (429): `errorCode` is `"QUOTA_EXCEEDED"` when a key has used its monthly requests (the count resets on the 1st of the month, UTC), or `"RATE_LIMIT_EXCEEDED"` when format and BIC lookups pass 100 an hour from one IP. `err.response.retry_after` gives the seconds until the limit resets, and a quota error also carries `err.response.upgrade_url`.
+
 ```ts
 import { AuthenticationError, NotFoundError, RateLimitError } from "@ibanchecker/client";
 
@@ -119,9 +129,9 @@ try {
   if (err instanceof NotFoundError) {
     console.log("No bank for that BIC");
   } else if (err instanceof RateLimitError) {
-    console.log("Slow down:", err.message);
+    console.log(err.errorCode, err.message); // "QUOTA_EXCEEDED" or "RATE_LIMIT_EXCEEDED"
   } else if (err instanceof AuthenticationError) {
-    console.log("Check your API key");
+    console.log("Missing or invalid API key");
   } else {
     throw err;
   }

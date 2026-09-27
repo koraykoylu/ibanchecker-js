@@ -44,14 +44,16 @@ export interface IbanCheckerOptions {
  * extract IBANs from free text, look up country format specifications, and
  * resolve SWIFT/BIC codes.
  *
- * An API key is optional. Without one, requests are limited to 100 per hour
- * per IP. Get a free key at https://ibanchecker.cash/api-docs.
+ * `validate`, `validateBulk` and `extract` need an API key; without one they
+ * reject with an {@link AuthenticationError}. A free key covers 100 requests a
+ * month: get one at https://ibanchecker.cash/api-docs. `getFormat` and
+ * `lookupBic` need no key and are limited to 100 requests an hour per IP.
  *
  * @example
  * ```ts
  * import { IbanChecker } from "@ibanchecker/client";
  *
- * const client = new IbanChecker(); // or new IbanChecker("iban_your_key")
+ * const client = new IbanChecker(process.env.IBANCHECKER_API_KEY);
  * const result = await client.validate("DE89 3704 0044 0532 0130 00");
  * if (result.valid) {
  *   console.log(result.bankName, result.bic);
@@ -69,36 +71,37 @@ export class IbanChecker {
     this.transport = options.transport ?? new FetchTransport(options.timeoutMs ?? 10_000);
   }
 
-  /** Validate a single IBAN. Returns a result with `valid: false` for a
-   * malformed IBAN (this is not an error); it rejects only on transport,
-   * auth, or rate-limit problems. */
+  /** Validate a single IBAN. Needs an API key. Returns a result with
+   * `valid: false` for a malformed IBAN (this is not an error); it rejects
+   * only on transport, auth, quota, or server problems. */
   async validate(iban: string): Promise<ValidationResult> {
     const data = await this.request("POST", "/validate", { iban });
     return validationResultFromApi(data);
   }
 
-  /** Validate up to 100 IBANs in one request. Results come back in the same
-   * order as the input. */
+  /** Validate up to 100 IBANs in one request. Needs an API key. Results come
+   * back in the same order as the input. */
   async validateBulk(ibans: readonly string[]): Promise<BatchResult> {
     const data = await this.request("POST", "/validate/bulk", { ibans });
     return batchResultFromApi(data);
   }
 
   /** Scan free text (emails, invoices) for IBAN-shaped strings and validate
-   * each candidate. Up to 50,000 characters per request. */
+   * each candidate. Up to 50,000 characters per request. Needs an API key. */
   async extract(text: string): Promise<BatchResult> {
     const data = await this.request("POST", "/extract", { text });
     return batchResultFromApi(data);
   }
 
   /** Return the IBAN format specification for an ISO 3166-1 alpha-2 country
-   * code (e.g. `"DE"`). */
+   * code (e.g. `"DE"`). Needs no API key (100 requests an hour per IP). */
   async getFormat(country: string): Promise<FormatSpec> {
     const data = await this.request("GET", `/formats/${country.toLowerCase()}`);
     return formatSpecFromApi(data);
   }
 
-  /** Resolve an 8 or 11 character ISO 9362 BIC to a bank record. */
+  /** Resolve an 8 or 11 character ISO 9362 BIC to a bank record. Needs no
+   * API key (100 requests an hour per IP). */
   async lookupBic(bic: string): Promise<BankRecord> {
     const data = await this.request("GET", `/swift/${bic.toUpperCase()}`);
     return bankRecordFromApi(data);
