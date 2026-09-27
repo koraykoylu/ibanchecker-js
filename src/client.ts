@@ -44,10 +44,17 @@ export interface IbanCheckerOptions {
  * extract IBANs from free text, look up country format specifications, and
  * resolve SWIFT/BIC codes.
  *
- * `validate`, `validateBulk` and `extract` need an API key; without one they
- * reject with an {@link AuthenticationError}. A free key covers 100 requests a
- * month: get one at https://ibanchecker.cash/api-docs. `getFormat` and
- * `lookupBic` need no key and are limited to 100 requests an hour per IP.
+ * Every method except `getFormat` needs an API key; without one the API
+ * answers 401 and the call rejects with an {@link AuthenticationError}. What a
+ * key can call follows its plan: a free key (100 requests a month) covers
+ * `validate` only, `validateBulk` and `lookupBic` need the Basic plan or above,
+ * and `extract` needs the Growth plan or above. A call outside the key's plan
+ * rejects with an {@link APIError} whose `errorCode` is `"PLAN_REQUIRED"`
+ * (HTTP 403). A key whose email address has a verified account at
+ * https://ibanchecker.cash/dashboard can try the methods its plan lacks: bulk
+ * validation up to 10 IBANs per call, BIC lookup, and extraction up to 5,000
+ * characters per call. Get a free key at https://ibanchecker.cash/api-docs.
+ * `getFormat` needs no key and is then limited to 100 requests an hour per IP.
  *
  * @example
  * ```ts
@@ -71,37 +78,46 @@ export class IbanChecker {
     this.transport = options.transport ?? new FetchTransport(options.timeoutMs ?? 10_000);
   }
 
-  /** Validate a single IBAN. Needs an API key. Returns a result with
-   * `valid: false` for a malformed IBAN (this is not an error); it rejects
-   * only on transport, auth, quota, or server problems. */
+  /** Validate a single IBAN. Needs an API key on any plan, including a free
+   * key; counts one request. Returns a result with `valid: false` for a
+   * malformed IBAN (this is not an error); it rejects only on transport, auth,
+   * quota, or server problems. */
   async validate(iban: string): Promise<ValidationResult> {
     const data = await this.request("POST", "/validate", { iban });
     return validationResultFromApi(data);
   }
 
-  /** Validate up to 100 IBANs in one request. Needs an API key. Results come
-   * back in the same order as the input. */
+  /** Validate up to 100 IBANs in one request. Needs an API key on the Basic
+   * plan or above; a key with a verified account can try it with up to 10
+   * IBANs per call. Counts one request per IBAN. Results come back in the same
+   * order as the input. */
   async validateBulk(ibans: readonly string[]): Promise<BatchResult> {
     const data = await this.request("POST", "/validate/bulk", { ibans });
     return batchResultFromApi(data);
   }
 
   /** Scan free text (emails, invoices) for IBAN-shaped strings and validate
-   * each candidate. Up to 50,000 characters per request. Needs an API key. */
+   * each candidate. Up to 50,000 characters per request. Needs an API key on
+   * the Growth plan or above; a key with a verified account can try it with up
+   * to 5,000 characters per call. Counts one request per IBAN found, at least
+   * one per call. */
   async extract(text: string): Promise<BatchResult> {
     const data = await this.request("POST", "/extract", { text });
     return batchResultFromApi(data);
   }
 
   /** Return the IBAN format specification for an ISO 3166-1 alpha-2 country
-   * code (e.g. `"DE"`). Needs no API key (100 requests an hour per IP). */
+   * code (e.g. `"DE"`). The only method that needs no API key; without one it
+   * is limited to 100 requests an hour per IP. */
   async getFormat(country: string): Promise<FormatSpec> {
     const data = await this.request("GET", `/formats/${country.toLowerCase()}`);
     return formatSpecFromApi(data);
   }
 
-  /** Resolve an 8 or 11 character ISO 9362 BIC to a bank record. Needs no
-   * API key (100 requests an hour per IP). */
+  /** Resolve an 8 or 11 character ISO 9362 BIC to a bank record. Needs an API
+   * key on the Basic plan or above, or a key with a verified account to try
+   * it; counts one request. Without a key the API answers 401, raised as
+   * {@link AuthenticationError}. */
   async lookupBic(bic: string): Promise<BankRecord> {
     const data = await this.request("GET", `/swift/${bic.toUpperCase()}`);
     return bankRecordFromApi(data);

@@ -17,7 +17,7 @@ Requires Node 18 or newer (for global `fetch`), or any modern browser bundler. T
 ```ts
 import { IbanChecker } from "@ibanchecker/client";
 
-const client = new IbanChecker(process.env.IBANCHECKER_API_KEY); // validate, validateBulk and extract need a key
+const client = new IbanChecker(process.env.IBANCHECKER_API_KEY); // every method except getFormat needs a key
 
 const result = await client.validate("DE89 3704 0044 0532 0130 00");
 if (result.valid) {
@@ -38,26 +38,38 @@ const { IbanChecker } = require("@ibanchecker/client");
 
 ## Authentication
 
-`validate()`, `validateBulk()` and `extract()` need an API key. Without one the API answers `401` and the client throws an `AuthenticationError`. A free key covers 100 requests a month; request one at [ibanchecker.cash/api-docs](https://ibanchecker.cash/api-docs) and it arrives by email in seconds. Paid plans with higher limits are at [ibanchecker.cash/pricing](https://ibanchecker.cash/pricing).
+Every method except `getFormat()` needs an API key, `lookupBic()` included. Without one the API answers `401` and the client throws an `AuthenticationError`. The client does not check for a key before sending; the error comes from the API. Request a free key at [ibanchecker.cash/api-docs](https://ibanchecker.cash/api-docs) and it arrives by email in seconds. Paid plans with higher limits are at [ibanchecker.cash/pricing](https://ibanchecker.cash/pricing).
 
-`getFormat()` and `lookupBic()` need no key. They are limited to 100 requests an hour per IP and do not count against a key's monthly requests.
+What a key can call follows its plan:
+
+- A free key covers `validate()` only, with 100 requests a month.
+- `validateBulk()` and `lookupBic()` need the Basic plan or above (Basic, Starter, Growth, Enterprise).
+- `extract()` needs the Growth plan or above (Growth, Enterprise).
+
+A call outside the key's plan gets `403` with `errorCode` `"PLAN_REQUIRED"`, which the client raises as an `APIError` (see [Error handling](#error-handling)).
+
+A key whose email address has a verified account at [ibanchecker.cash/dashboard](https://ibanchecker.cash/dashboard) can try the methods its plan lacks, on any plan: `validateBulk()` with up to 10 IBANs per call, `lookupBic()`, and `extract()` with up to 5,000 characters per call. With the plan itself the limits are 100 IBANs per call and 50,000 characters per call. A trial call over the trial size gets `400`, raised as a `BadRequestError` with `errorCode` `"TOO_MANY_IBANS"` or `"TEXT_TOO_LONG"`.
+
+`validate()` and `lookupBic()` count one request each. `validateBulk()` counts one request per IBAN in the call, and `extract()` one per IBAN it finds, at least one per call. A call that costs more than the requests left this month gets `429` with `errorCode` `"QUOTA_EXCEEDED"`.
+
+`getFormat()` needs no key. Without one it is limited to 100 requests an hour per IP.
 
 ```ts
 const client = new IbanChecker("iban_your_api_key");
 
-// format and BIC lookups only, no key
-const lookups = new IbanChecker();
+// country format lookups only, no key
+const formats = new IbanChecker();
 ```
 
 ## Methods
 
 | Method | Description | API key |
 | --- | --- | --- |
-| `validate(iban: string)` | Validate a single IBAN. Returns a `ValidationResult`. | Required |
-| `validateBulk(ibans: string[])` | Validate up to 100 IBANs. Returns a `BatchResult`. | Required |
-| `extract(text: string)` | Find and validate IBANs in free text (up to 50,000 chars). Returns a `BatchResult`. | Required |
+| `validate(iban: string)` | Validate a single IBAN. Returns a `ValidationResult`. | Required, any plan |
+| `validateBulk(ibans: string[])` | Validate up to 100 IBANs. Returns a `BatchResult`. | Required, Basic or above |
+| `extract(text: string)` | Find and validate IBANs in free text (up to 50,000 chars). Returns a `BatchResult`. | Required, Growth or above |
 | `getFormat(country: string)` | IBAN format spec for an ISO country code. Returns a `FormatSpec`. | Not needed |
-| `lookupBic(bic: string)` | Resolve an 8 or 11 character BIC. Returns a `BankRecord`. | Not needed |
+| `lookupBic(bic: string)` | Resolve an 8 or 11 character BIC. Returns a `BankRecord`. | Required, Basic or above |
 
 ### Bulk validation
 
@@ -88,7 +100,7 @@ for (const result of batch.results) {
 
 ### Country format and BIC lookup
 
-These two need no API key (100 requests an hour per IP).
+`getFormat()` needs no API key (100 requests an hour per IP without one). `lookupBic()` needs a key on the Basic plan or above, or a key with a verified account to try it.
 
 ```ts
 const format = await client.getFormat("DE");
@@ -115,19 +127,23 @@ if (result.valid && result.nationalCheckValid === false) {
 
 ## Error handling
 
-A malformed IBAN is **not** an exception: `validate()` resolves to a `ValidationResult` with `valid: false`. Rejections happen only for transport, authentication, quota, and server-side problems.
+A malformed IBAN is **not** an exception: `validate()` resolves to a `ValidationResult` with `valid: false`. Rejections happen only for transport, authentication, plan, quota, and server-side problems.
 
-- `AuthenticationError` (401): the key is missing, invalid or inactive. `validate()`, `validateBulk()` and `extract()` raise it when no key was given.
-- `RateLimitError` (429): `errorCode` is `"QUOTA_EXCEEDED"` when a key has used its monthly requests (the count resets on the 1st of the month, UTC), or `"RATE_LIMIT_EXCEEDED"` when format and BIC lookups pass 100 an hour from one IP. `err.response.retry_after` gives the seconds until the limit resets, and a quota error also carries `err.response.upgrade_url`.
+- `AuthenticationError` (401): the key is missing, invalid or inactive. Every method except `getFormat()` raises it when no key was given, `lookupBic()` included.
+- `APIError` (403): `errorCode` is `"PLAN_REQUIRED"` when the key's plan does not cover the method. `err.response.required_plan` is `"basic"` or `"growth"`, and `err.response.upgrade_url` points to the pricing page. The client has no separate class for `403`, so check `err.status` or `err.errorCode`. `APIError` also covers server-side errors (5xx).
+- `BadRequestError` (400): besides a malformed request, a trial call over the trial size gets this, with `errorCode` `"TOO_MANY_IBANS"` (bulk validation) or `"TEXT_TOO_LONG"` (extraction).
+- `RateLimitError` (429): `errorCode` is `"QUOTA_EXCEEDED"` when a key has used its monthly requests or a call costs more than the requests left (the count resets on the 1st of the month, UTC), or `"RATE_LIMIT_EXCEEDED"` when format lookups without a key pass 100 an hour from one IP. `err.response.retry_after` gives the seconds until the limit resets, and a quota error also carries `err.response.upgrade_url`.
 
 ```ts
-import { AuthenticationError, NotFoundError, RateLimitError } from "@ibanchecker/client";
+import { APIError, AuthenticationError, NotFoundError, RateLimitError } from "@ibanchecker/client";
 
 try {
   const bank = await client.lookupBic("ZZZZZZZZ");
 } catch (err) {
   if (err instanceof NotFoundError) {
     console.log("No bank for that BIC");
+  } else if (err instanceof APIError && err.errorCode === "PLAN_REQUIRED") {
+    console.log("This key's plan does not include BIC lookup");
   } else if (err instanceof RateLimitError) {
     console.log(err.errorCode, err.message); // "QUOTA_EXCEEDED" or "RATE_LIMIT_EXCEEDED"
   } else if (err instanceof AuthenticationError) {
