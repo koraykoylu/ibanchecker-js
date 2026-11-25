@@ -125,6 +125,16 @@ if (result.valid && result.nationalCheckValid === false) {
 }
 ```
 
+### Bank logo
+
+`result.bankLogo` and `bank.bankLogo` are a `BankLogo`, or `null` when no verified logo is held for the bank. It carries the mark the ibanchecker.cash result card shows: a file for light backgrounds, a file for dark backgrounds (the same URL when one file reads on both), whether the dark file needs a light chip behind it, and the format (`svg`, `png` or `webp`). Every logo is checked by hand against the bank's current mark, so not every bank has one yet; the field is empty then. The logos are the banks' trademarks, provided to identify the bank.
+
+```ts
+if (result.bankLogo) {
+  const { onLight, onDark, darkNeedsLightBacking, format } = result.bankLogo;
+}
+```
+
 ## Error handling
 
 A malformed IBAN is **not** an exception: `validate()` resolves to a `ValidationResult` with `valid: false`. Rejections happen only for transport, authentication, plan, quota, and server-side problems.

@@ -178,3 +178,27 @@ test("a transport-level failure raises the base IbanCheckerError", async () => {
 
   await assert.rejects(() => client.validate("DE89370400440532013000"), /network down/);
 });
+
+test("validate() and lookupBic() map bank_logo, and a missing logo is null", async () => {
+  const logo = {
+    on_light: "https://logos.ibanchecker.cash/logos/CFTEMTM1-site.svg",
+    on_dark: "https://logos.ibanchecker.cash/logos/CFTEMTM1-site-w.svg",
+    dark_needs_light_backing: false,
+    format: "svg",
+  };
+  let client = new IbanChecker(undefined, { transport: new MockTransport(200, { valid: true, iban: "X", bank_logo: logo }) });
+  const result = await client.validate("X");
+  assert.equal(result.bankLogo.onLight, logo.on_light);
+  assert.equal(result.bankLogo.onDark, logo.on_dark);
+  assert.equal(result.bankLogo.darkNeedsLightBacking, false);
+  assert.equal(result.bankLogo.format, "svg");
+
+  client = new IbanChecker(undefined, { transport: new MockTransport(200, { bic: "CFTEMTM1", bank_logo: logo }) });
+  const bank = await client.lookupBic("CFTEMTM1");
+  assert.equal(bank.bankLogo.onDark, logo.on_dark);
+
+  client = new IbanChecker(undefined, { transport: new MockTransport(200, { valid: true, iban: "X", bank_logo: null }) });
+  assert.equal((await client.validate("X")).bankLogo, null);
+  client = new IbanChecker(undefined, { transport: new MockTransport(200, { valid: true, iban: "X" }) });
+  assert.equal((await client.validate("X")).bankLogo, null);
+});

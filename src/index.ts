@@ -22,4 +22,5 @@ export {
   type FormatSpec,
   type BbanField,
   type BankRecord,
+  type BankLogo,
 } from "./models.js";

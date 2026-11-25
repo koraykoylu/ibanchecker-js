@@ -9,6 +9,21 @@ export interface BbanField {
   raw: Record<string, unknown>;
 }
 
+/** The bank's logo as the ibanchecker.cash result card shows it. The logos are
+ * the banks' trademarks, provided to identify the bank. */
+export interface BankLogo {
+  /** File to draw on a light background. */
+  onLight: string;
+  /** File to draw on a dark background; the same URL as `onLight` when one
+   * file reads on both. */
+  onDark: string;
+  /** `true` when `onDark` has no dark variant: on a dark surface, draw it on a
+   * light chip. */
+  darkNeedsLightBacking: boolean;
+  format: "svg" | "png" | "webp";
+  raw: Record<string, unknown>;
+}
+
 /** Result of validating one IBAN.
  *
  * `valid` is the primary flag. When it is `false`, only `iban`, `formatted`,
@@ -26,6 +41,8 @@ export interface ValidationResult {
   bankType?: string | null;
   bic?: string | null;
   bankCity?: string | null;
+  /** `null` when no verified logo is held for the bank. */
+  bankLogo?: BankLogo | null;
   bankCode?: string | null;
   branchCode?: string | null;
   accountNumber?: string | null;
@@ -80,6 +97,8 @@ export interface BankRecord {
   locationCode?: string;
   branchCode?: string | null;
   bankName?: string;
+  /** `null` when no verified logo is held for the bank. */
+  bankLogo?: BankLogo | null;
   city?: string | null;
   countryName?: string;
   sepa?: boolean | null;
@@ -98,6 +117,17 @@ function bbanFieldFromApi(data: any): BbanField {
   };
 }
 
+function bankLogoFromApi(data: any): BankLogo | null {
+  if (!data || typeof data !== "object") return null;
+  return {
+    onLight: data.on_light,
+    onDark: data.on_dark,
+    darkNeedsLightBacking: Boolean(data.dark_needs_light_backing),
+    format: data.format,
+    raw: data,
+  };
+}
+
 export function validationResultFromApi(data: any): ValidationResult {
   return {
     valid: Boolean(data.valid),
@@ -111,6 +141,7 @@ export function validationResultFromApi(data: any): ValidationResult {
     bankType: data.bank_type ?? null,
     bic: data.bic ?? null,
     bankCity: data.bank_city ?? null,
+    bankLogo: bankLogoFromApi(data.bank_logo),
     bankCode: data.bank_code ?? null,
     branchCode: data.branch_code ?? null,
     accountNumber: data.account_number ?? null,
@@ -162,6 +193,7 @@ export function bankRecordFromApi(data: any): BankRecord {
     locationCode: data.location_code,
     branchCode: data.branch_code ?? null,
     bankName: data.bank_name,
+    bankLogo: bankLogoFromApi(data.bank_logo),
     city: data.city ?? null,
     countryName: data.country_name,
     sepa: data.sepa ?? null,
